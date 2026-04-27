@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D Physics Engine - Dynamic Collisions & Gravity</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Poppins', 'Arial', sans-serif;
+        }
+
+        /* UI Overlay - Modern Glassmorphism */
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(12px);
+            border-radius: 20px;
+            padding: 12px 24px;
+            color: white;
+            pointer-events: none;
+            z-index: 10;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+            font-weight: 500;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.4rem;
+            letter-spacing: 1px;
+            background: linear-gradient(135deg, #fff, #88aaff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .subtitle {
+            font-size: 0.75rem;
+            opacity: 0.8;
+            margin-top: 4px;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 25px;
+            left: 25px;
+            display: flex;
+            gap: 15px;
+            z-index: 20;
+            pointer-events: auto;
+        }
+
+        button {
+            background: linear-gradient(135deg, #2c3e66, #1a2639);
+            backdrop-filter: blur(5px);
+            border: none;
+            padding: 12px 24px;
+            border-radius: 50px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.2);
+            letter-spacing: 0.5px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            background: linear-gradient(135deg, #3e5a8c, #2a3a5a);
+            box-shadow: 0 8px 18px rgba(0,0,0,0.4);
+        }
+
+        button:active {
+            transform: translateY(2px);
+        }
+
+        .stats {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(8px);
+            padding: 10px 18px;
+            border-radius: 16px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            color: #ccffcc;
+            pointer-events: none;
+            z-index: 10;
+            border: 1px solid #44ff44aa;
+            font-weight: bold;
+        }
+
+        .instruction {
+            position: absolute;
+            bottom: 25px;
+            right: 25px;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            color: #ddd;
+            font-family: monospace;
+            pointer-events: none;
+        }
+
+        @media (max-width: 600px) {
+            button { padding: 8px 16px; font-size: 0.8rem; }
+            .info-panel { padding: 8px 16px; }
+            h1 { font-size: 1.1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="info-panel">
+        <h1>⚡ 3D PHYSICS ENGINE</h1>
+        <div class="subtitle">realistic gravity | elastic collisions | dynamic cubes</div>
+    </div>
+    <div class="controls">
+        <button id="spawnBtn">✨ SPAWN BOX</button>
+        <button id="clearBtn">🗑️ CLEAR ALL</button>
+    </div>
+    <div class="stats">
+        📦 Objects: <span id="objCount">0</span>
+    </div>
+    <div class="instruction">
+        🖱️ Drag to rotate view | Scroll to zoom
+    </div>
+
+    <!-- Import Three.js core and add-ons from CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+        // --- Setup Scene, Camera, Renderers ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050b1a);
+        scene.fog = new THREE.FogExp2(0x050b1a, 0.008); // subtle fog for depth
+
+        // Camera: Perspective
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(8, 6, 12);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true; // enable shadows for better depth
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        // --- Orbit Controls for interactive camera ---
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;      // inertial movement
+        controls.dampingFactor = 0.05;
+        controls.zoomSpeed = 1.2;
+        controls.rotateSpeed = 1.0;
+        controls.enableZoom = true;
+        controls.autoRotate = false;
+        controls.target.set(0, 1, 0);
+
+        // --- Lighting System (vibrant and realistic) ---
+        // Ambient light
+        const ambientLight = new THREE.AmbientLight(0x404060);
+        scene.add(ambientLight);
+        
+        // Main directional light (sun)
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 7);
+        dirLight.castShadow = true;
+        dirLight.receiveShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        dirLight.shadow.camera.near = 0.5;
+        dirLight.shadow.camera.far = 20;
+        dirLight.shadow.camera.left = -8;
+        dirLight.shadow.camera.right = 8;
+        dirLight.shadow.camera.top = 8;
+        dirLight.shadow.camera.bottom = -8;
+        scene.add(dirLight);
+        
+        // Fill light from below and back rim light
+        const fillLight = new THREE.PointLight(0x4466cc, 0.4);
+        fillLight.position.set(0, -2, 2);
+        scene.add(fillLight);
+        
+        const backLight = new THREE.PointLight(0xffaa66, 0.5);
+        backLight.position.set(-3, 4, -5);
+        scene.add(backLight);
+        
+        // Additional dynamic colored light for ambiance
+        const colorLight = new THREE.PointLight(0xff66aa, 0.35);
+        colorLight.position.set(2, 3, 3);
+        scene.add(colorLight);
+        
+        // Helper: subtle grid helper and ground visual (semi-transparent)
+        const gridHelper = new THREE.GridHelper(30, 20, 0x88aaff, 0x335588);
+        gridHelper.position.y = -2.4;
+        gridHelper.material.transparent = true;
+        gridHelper.material.opacity = 0.4;
+        scene.add(gridHelper);
+        
+        // --- Ground Plane (collision surface) ---
+        // Visual ground plane with nice material + shadow receiver
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x2a2e4a, roughness: 0.7, metalness: 0.1, transparent: true, opacity: 0.85 });
+        const groundPlane = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), groundMat);
+        groundPlane.rotation.x = -Math.PI / 2;
+        groundPlane.position.y = -2.5;
+        groundPlane.receiveShadow = true;
+        scene.add(groundPlane);
+        
+        // Decorative outer ring / rim
+        const rimMat = new THREE.MeshStandardMaterial({ color: 0x5a6eaa, roughness: 0.3, metalness: 0.7 });
+        const rimRing = new THREE.Mesh(new THREE.TorusGeometry(9.2, 0.15, 32, 100), rimMat);
+        rimRing.rotation.x = Math.PI / 2;
+        rimRing.position.y = -2.45;
+        scene.add(rimRing);
+        
+        // --- Physics globals ---
+        let bodies = [];            // array of RigidBody instances
+        const GRAVITY = new THREE.Vector3(0, -12.0, 0);   // strong gravity for satisfying fall
+        const GROUND_Y = -2.0;      // collision plane Y (top surface of ground)
+        const RESTITUTION = 0.68;    // bounce factor
+        const FRICTION_AIR = 0.995;  // air drag
+        
+        // --- RigidBody class with full collision response and rotation ---
+        class RigidBody {
+            constructor(mesh, mass = 1.0, colorVariant = null) {
+                this.mesh = mesh;
+                this.mass = mass;
+                this.velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 1.5,
+                    (Math.random() * 2) + 1,
+                    (Math.random() - 0.5) * 1.5
+                );
+                // random spin
+                this.angularVelocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 3.0,
+                    (Math.random() - 0.5) * 3.0,
+                    (Math.random() - 0.5) * 3.0
+                );
+                this.restitution = RESTITUTION;
+                // store previous position for penetration resolve (optional)
+                this.prevPosition = mesh.position.clone();
+            }
+            
+            update(dt) {
+                if (dt > 0.03) dt = 0.03; // stability cap
+                
+                // Apply gravity
+                this.velocity.x += GRAVITY.x * dt;
+                this.velocity.y += GRAVITY.y * dt;
+                this.velocity.z += GRAVITY.z * dt;
+                
+                // Air drag
+                this.velocity.multiplyScalar(FRICTION_AIR);
+                
+                // Euler integration for position
+                this.mesh.position.x += this.velocity.x * dt;
+                this.mesh.position.y += this.velocity.y * dt;
+                this.mesh.position.z += this.velocity.z * dt;
+                
+                // Angular velocity integration (rotate mesh)
+                if (this.angularVelocity.length() > 0.01) {
+                    const angle = this.angularVelocity.length() * dt;
+                    const axis = this.angularVelocity.clone().normalize();
+                    this.mesh.rotateOnWorldAxis(axis, angle);
+                    // slight damping for spin
+                    this.angularVelocity.multiplyScalar(0.995);
+                }
+                
+                // --- Ground collision (Y-axis) ---
+                const halfSizeY = this.mesh.geometry.parameters.height / 2;
+                const lowestPoint = this.mesh.position.y - halfSizeY;
+                
+                if (lowestPoint < GROUND_Y) {
+                    // reposition to just touching ground
+                    this.mesh.position.y = GROUND_Y + halfSizeY;
+                    // reflect vertical velocity with restitution
+                    if (this.velocity.y < 0) {
+                        this.velocity.y = -this.velocity.y * this.restitution;
+                        // add slight random horizontal variation on bounce for realism
+                        if (Math.abs(this.velocity.y) < 0.5) this.velocity.y = 0;
+                        // also reduce angular velocity on hit
+                        this.angularVelocity.multiplyScalar(0.9);
+                    }
+                }
+                
+                // Optional: simple boundary walls (X and Z limits to keep objects in view)
+                const bound = 7.2;
+                const halfSizeX = this.mesh.geometry.parameters.width / 2;
+                const halfSizeZ = this.mesh.geometry.parameters.depth / 2;
+                
+                // X boundaries
+                if (this.mesh.position.x + halfSizeX > bound) {
+                    this.mesh.position.x = bound - halfSizeX;
+                    this.velocity.x = -this.velocity.x * 0.7;
+                }
+                if (this.mesh.position.x - halfSizeX < -bound) {
+                    this.mesh.position.x = -bound + halfSizeX;
+                    this.velocity.x = -this.velocity.x * 0.7;
+                }
+                // Z boundaries
+                if (this.mesh.position.z + halfSizeZ > bound) {
+                    this.mesh.position.z = bound - halfSizeZ;
+                    this.velocity.z = -this.velocity.z * 0.7;
+                }
+                if (this.mesh.position.z - halfSizeZ < -bound) {
+                    this.mesh.position.z = -bound + halfSizeZ;
+                    this.velocity.z = -this.velocity.z * 0.7;
+                }
+                
+                // update previous position record
+                this.prevPosition.copy(this.mesh.position);
+            }
+        }
+        
+        // --- Collision Detection (AABB based on bounding box) ---
+        function checkCollision(bodyA, bodyB) {
+            const boxA = new THREE.Box3().setFromObject(bodyA.mesh);
+            const boxB = new THREE.Box3().setFromObject(bodyB.mesh);
+            return boxA.intersectsBox(boxB);
+        }
+        
+        // --- Impulse-based collision resolution with restitution and mass ---
+        function resolveCollision(a, b) {
+            // Calculate collision normal (direction from A to B)
+            const normal = new THREE.Vector3().subVectors(b.mesh.position, a.mesh.position).normalize();
+            
+            // Relative velocity
+            const relVelocity = new THREE.Vector3().subVectors(b.velocity, a.velocity);
+            const velAlong = relVelocity.dot(normal);
+            
+            if (velAlong > 0) return; // moving apart
+            
+            const e = Math.min(a.restitution, b.restitution);
+            const invMassA = 1 / a.mass;
+            const invMassB = 1 / b.mass;
+            
+            let impulseMagnitude = -(1 + e) * velAlong;
+            impulseMagnitude /= (invMassA + invMassB);
+            
+            const impulse = normal.clone().multiplyScalar(impulseMagnitude);
+            
+            a.velocity.sub(impulse.clone().multiplyScalar(invMassA));
+            b.velocity.add(impulse.clone().multiplyScalar(invMassB));
+            
+            // Positional correction to avoid sinking (small percentage)
+            const percent = 0.25;
+            const slop = 0.02;
+            const correction = Math.max(impulseMagnitude * 0.02, 0.03);
+            const correctionVec = normal.clone().multiplyScalar(correction);
+            if (!isNaN(correctionVec.x)) {
+                a.mesh.position.sub(correctionVec);
+                b.mesh.position.add(correctionVec);
+            }
+            
+            // Add small spin transfer effect (angular velocity)
+            const spinInfluence = 0.8;
+            a.angularVelocity.add(new THREE.Vector3(
+                normal.y * impulseMagnitude * spinInfluence,
+                normal.x * impulseMagnitude * spinInfluence,
+                normal.z * impulseMagnitude * spinInfluence
+            ).multiplyScalar(0.05));
+            b.angularVelocity.sub(new THREE.Vector3(
+                normal.y * impulseMagnitude * spinInfluence,
+                normal.x * impulseMagnitude * spinInfluence,
+                normal.z * impulseMagnitude * spinInfluence
+            ).multiplyScalar(0.05));
+        }
+        
+        // --- Helper: Spawn a colorful box with random color and slight random size variation ---
+        function spawnBox() {
+            // random size between 0.65 and 1.1
+            const w = 0.7 + Math.random() * 0.5;
+            const h = 0.7 + Math.random() * 0.5;
+            const d = 0.7 + Math.random() * 0.5;
+            const geometry = new THREE.BoxGeometry(w, h, d);
+            
+            // Vibrant random color with high saturation
+            const hue = Math.random();
+            const saturation = 0.8;
+            const lightness = 0.65;
+            const color = new THREE.Color().setHSL(hue, saturation, lightness);
+            
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                roughness: 0.25,
+                metalness: 0.4,
+                emissive: new THREE.Color().setHSL(hue, 1, 0.1),
+                emissiveIntensity: 0.2
+            });
+            const cube = new THREE.Mesh(geometry, material);
+            
+            // Random position above ground
+            const xPos = (Math.random() - 0.5) * 6;
+            const zPos = (Math.random() - 0.5) * 6;
+            cube.position.set(xPos, 2.5 + Math.random() * 3.5, zPos);
+            
+            // Enable shadows
+            cube.castShadow = true;
+            cube.receiveShadow = true;
+            
+            scene.add(cube);
+            
+            // Create physics body with slightly randomized mass (0.8 to 1.2)
+            const mass = 0.9 + Math.random() * 0.6;
+            const body = new RigidBody(cube, mass);
+            
+            // Add extra random velocity pop for liveliness
+            body.velocity.y += Math.random() * 2.5;
+            body.velocity.x += (Math.random() - 0.5) * 2;
+            body.velocity.z += (Math.random() - 0.5) * 2;
+            
+            bodies.push(body);
+            updateCounter();
+            
+            // small particle effect? just visual feedback: brief flash on spawn not needed but nice.
+            // add edge outline effect via little ring? skip for performance.
+        }
+        
+        // --- Clear all objects from scene and physics array ---
+        function clearAllBodies() {
+            bodies.forEach(body => {
+                scene.remove(body.mesh);
+                // optional dispose geometry/material to avoid memory leaks (for many objects)
+                body.mesh.geometry.dispose();
+                if (Array.isArray(body.mesh.material)) body.mesh.material.forEach(m => m.dispose());
+                else body.mesh.material.dispose();
+            });
+            bodies = [];
+            updateCounter();
+        }
+        
+        // --- Update UI counter ---
+        function updateCounter() {
+            document.getElementById('objCount').innerText = bodies.length;
+        }
+        
+        // --- Starfield background effect (adds depth) ---
+        const starGeometry = new THREE.BufferGeometry();
+        const starCount = 1200;
+        const starPositions = new Float32Array(starCount * 3);
+        for (let i = 0; i < starCount; i++) {
+            starPositions[i*3] = (Math.random() - 0.5) * 200;
+            starPositions[i*3+1] = (Math.random() - 0.5) * 100;
+            starPositions[i*3+2] = (Math.random() - 0.5) * 80 - 40;
+        }
+        starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+        const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.12, transparent: true, opacity: 0.6 });
+        const stars = new THREE.Points(starGeometry, starMaterial);
+        scene.add(stars);
+        
+        // Animate stars slowly
+        function animateStars() {
+            stars.rotation.y += 0.0005;
+            stars.rotation.x += 0.0003;
+            requestAnimationFrame(animateStars);
+        }
+        animateStars();
+        
+        // --- Simple helper for floating particles around boxes? not necessary, but adds flair: dynamic point light bounce?
+        // just animate colorLight subtly
+        let time = 0;
+        
+        // --- Main Animation Loop & Collision Handling ---
+        let lastTimestamp = performance.now();
+        
+        function animatePhysics() {
+            const now = performance.now();
+            let dt = Math.min(0.033, (now - lastTimestamp) / 1000);
+            if (dt <= 0) dt = 0.016;
+            lastTimestamp = now;
+            
+            // Update all rigid bodies
+            for (let body of bodies) {
+                body.update(dt);
+            }
+            
+            // Broad phase + collision resolution (iterative for stability)
+            const iterations = 3;
+            for (let iter = 0; iter < iterations; iter++) {
+                for (let i = 0; i < bodies.length; i++) {
+                    for (let j = i + 1; j < bodies.length; j++) {
+                        if (checkCollision(bodies[i], bodies[j])) {
+                            resolveCollision(bodies[i], bodies[j]);
+                            // small position adjustment after collision to avoid deep penetration
+                        }
+                    }
+                }
+            }
+            
+            // Update dynamic light effect based on average energy (just for fun)
+            let avgSpeed = 0;
+            if (bodies.length > 0) {
+                let totalVel = 0;
+                bodies.forEach(b => { totalVel += b.velocity.length(); });
+                avgSpeed = totalVel / bodies.length;
+                const intensity = 0.35 + Math.min(0.45, avgSpeed * 0.08);
+                colorLight.intensity = intensity;
+                // slight color shift
+                const hueShift = (time * 0.5) % 1;
+                colorLight.color.setHSL(hueShift, 1, 0.6);
+            } else {
+                colorLight.intensity = 0.25;
+            }
+            
+            // Rotate fill light gently
+            fillLight.position.x = Math.sin(time * 0.7) * 1.5;
+            fillLight.position.z = Math.cos(time * 0.5) * 1.8;
+            backLight.intensity = 0.5 + Math.sin(time * 1.2) * 0.2;
+            
+            time += dt;
+            
+            // Update orbit controls
+            controls.update();
+            
+            // Render scene
+            renderer.render(scene, camera);
+            requestAnimationFrame(animatePhysics);
+        }
+        
+        // --- Initialize demo with few starting boxes ---
+        function initDemo() {
+            // Spawn 5 initial colorful boxes
+            for (let i = 0; i < 5; i++) {
+                spawnBox();
+            }
+            // additional random velocities already applied inside spawnBox
+        }
+        
+        // --- Event Listeners ---
+        document.getElementById('spawnBtn').addEventListener('click', () => {
+            spawnBox();
+        });
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            clearAllBodies();
+        });
+        
+        // handle window resize
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // start engine
+        initDemo();
+        animatePhysics();
+        
+        // Small console greeting
+        console.log('3D Physics Engine Loaded | Gravity, collisions, rotational dynamics | Use buttons to spawn/clear');
+    </script>
+</body>
+</html>
